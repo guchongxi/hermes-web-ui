@@ -13,8 +13,13 @@ const authMocks = vi.hoisted(() => ({
   getToken: vi.fn(),
 }))
 
+const securityEventMocks = vi.hoisted(() => ({
+  logSecurityEvent: vi.fn(),
+}))
+
 vi.mock('../../packages/server/src/services/credentials', () => credentialsMocks)
 vi.mock('../../packages/server/src/services/auth', () => authMocks)
+vi.mock('../../packages/server/src/services/security-events', () => securityEventMocks)
 
 function createMockCtx({
   body = {},
@@ -92,6 +97,9 @@ describe('auth controller', () => {
     expect(ctx.status).toBe(401)
     expect(ctx.body).toEqual({ error: 'Invalid username or password' })
     expect(authMocks.getToken).not.toHaveBeenCalled()
+    expect(securityEventMocks.logSecurityEvent).toHaveBeenCalledWith('auth.login_invalid_credentials', {
+      ip: '127.0.0.1',
+    })
   })
 
   it('returns the static token for a successful login', async () => {
@@ -108,9 +116,12 @@ describe('auth controller', () => {
 
     expect(ctx.status).toBe(200)
     expect(ctx.body).toEqual({ token: 'test-token' })
+    expect(securityEventMocks.logSecurityEvent).toHaveBeenCalledWith('auth.login_succeeded', {
+      ip: '127.0.0.1',
+    })
   })
 
-  it('rate limits repeated failed logins from the same IP', async () => {
+  it('rate limits repeated failed logins from the same IP with a stable 429 payload', async () => {
     credentialsMocks.verifyCredentials.mockResolvedValue(false)
 
     for (let index = 0; index < 5; index += 1) {
@@ -135,9 +146,16 @@ describe('auth controller', () => {
     await login(limitedCtx as any)
 
     expect(limitedCtx.status).toBe(429)
-    expect(limitedCtx.body).toEqual({ error: 'Too many login attempts. Please try again later.' })
+    expect(limitedCtx.body).toEqual({
+      code: 'rate_limited',
+      error: 'Too many login attempts. Please try again later.',
+    })
     expect(limitedCtx.set).toHaveBeenCalledWith('Retry-After', expect.any(String))
     expect(credentialsMocks.verifyCredentials).toHaveBeenCalledTimes(5)
+    expect(securityEventMocks.logSecurityEvent).toHaveBeenLastCalledWith('auth.login_rate_limited', {
+      ip: '127.0.0.1',
+      retryAfterSeconds: expect.any(Number),
+    })
   })
 
   it('ignores x-forwarded-for when TRUST_PROXY is disabled', async () => {
