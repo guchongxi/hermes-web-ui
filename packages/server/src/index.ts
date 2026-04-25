@@ -8,7 +8,7 @@ import { resolve } from 'path'
 import { mkdir } from 'fs/promises'
 import { readFileSync } from 'fs'
 import { config } from './config'
-import { getToken, requireAuth } from './services/auth'
+import { describeAuthRuntime, getAuthRuntime, requireAuth } from './services/auth'
 import { initGatewayManager, getGatewayManagerInstance } from './services/gateway-bootstrap'
 import { bindShutdown } from './services/shutdown'
 import { setupTerminalWebSocket } from './routes/hermes/terminal'
@@ -17,6 +17,7 @@ import { registerRoutes } from './routes'
 import { setGroupChatServer } from './routes/hermes/group-chat'
 import { GroupChatServer } from './services/hermes/group-chat'
 import { logger } from './services/logger'
+import { getKoaCorsOrigin } from './services/network-security'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
 declare const __APP_VERSION__: string
@@ -41,8 +42,9 @@ export async function bootstrap() {
   await mkdir(config.uploadDir, { recursive: true })
   await mkdir(config.dataDir, { recursive: true })
 
-  const authToken = await getToken()
+  const authRuntime = await getAuthRuntime()
   const app = new Koa()
+  app.proxy = config.trustProxy
 
   await initGatewayManager()
   console.log('[bootstrap] gateway manager initialized')
@@ -52,18 +54,23 @@ export async function bootstrap() {
   initUsageStore()
   console.log('[bootstrap] usage store initialized')
 
-  app.use(cors({ origin: config.corsOrigins }))
+  app.use(cors({
+    origin: (ctx) => getKoaCorsOrigin(config.corsOrigins, ctx.get('Origin') || null),
+  }))
   app.use(bodyParser())
   console.log('[bootstrap] cors + bodyParser registered')
 
   // Register all routes (handles auth internally)
-  const proxyMiddleware = registerRoutes(app, requireAuth(authToken))
+  const proxyMiddleware = registerRoutes(app, requireAuth(authRuntime))
   app.use(proxyMiddleware)
   console.log('[bootstrap] routes registered')
 
-  if (authToken) {
-    console.log(`Auth enabled — token: ${authToken}`)
-    logger.info('Auth enabled — token: %s', authToken)
+  const authSummary = describeAuthRuntime(authRuntime)
+  console.log(authSummary)
+  if (authRuntime.mode === 'insecure-no-auth') {
+    logger.warn(authSummary)
+  } else {
+    logger.info(authSummary)
   }
 
   // SPA fallback
@@ -84,11 +91,19 @@ export async function bootstrap() {
   server = app.listen(config.port, '0.0.0.0')
   console.log('[bootstrap] app.listen called')
 
-  setupTerminalWebSocket(server)
+  setupTerminalWebSocket(server, {
+    authRuntime,
+    corsOrigins: config.corsOrigins,
+    trustProxy: config.trustProxy,
+  })
   console.log('[bootstrap] terminal websocket setup')
 
   // Group chat Socket.IO (must be after server is created)
-  const groupChatServer = new GroupChatServer(server)
+  const groupChatServer = new GroupChatServer(server, {
+    authRuntime,
+    corsOrigins: config.corsOrigins,
+    trustProxy: config.trustProxy,
+  })
   setGroupChatServer(groupChatServer)
   groupChatServer.setGatewayManager(getGatewayManagerInstance())
 

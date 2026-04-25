@@ -1,11 +1,15 @@
 import { Server, Socket, Namespace } from 'socket.io'
 import type { Server as HttpServer } from 'http'
-import { getToken } from '../../../services/auth'
+import type { AuthRuntime } from '../../../services/auth'
+import type { CorsOriginPolicy } from '../../../services/network-security'
+import { getAuthRuntime, isTokenAuthorized } from '../../../services/auth'
 import { logger } from '../../../services/logger'
 import { getDb, ensureTable } from '../../../db'
 import { AgentClients } from './agent-clients'
 import { deleteSession as hermesDeleteSession } from '../hermes-cli'
 import { ContextEngine } from '../context-engine/compressor'
+import { extractClientIp, getRequestOrigin, getSocketIoCorsOrigin, isOriginAllowed, parseBooleanFlag, parseCorsOrigins } from '../../../services/network-security'
+import { logSecurityEvent } from '../../../services/security-events'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -130,6 +134,12 @@ interface GroupChatSessionProfile {
 export interface PendingSessionDeleteDrainResult {
     deleted: string[]
     failed: Array<{ sessionId: string; error: string }>
+}
+
+interface GroupChatServerOptions {
+    authRuntime?: AuthRuntime
+    corsOrigins?: CorsOriginPolicy
+    trustProxy?: boolean
 }
 
 class ChatStorage {
@@ -489,6 +499,9 @@ export class GroupChatServer {
     private io: Server
     private nsp: Namespace
     private storage: ChatStorage
+    private authRuntime?: AuthRuntime
+    private corsOrigins: CorsOriginPolicy
+    private trustProxy: boolean
     private rooms = new Map<string, ChatRoom>()
     /** Map: socket.id → persistent userId */
     private socketUserMap = new Map<string, string>()
@@ -509,12 +522,29 @@ export class GroupChatServer {
         }
     }
 
-    constructor(httpServer: HttpServer) {
+    constructor(httpServer: HttpServer, options: GroupChatServerOptions = {}) {
         this.storage = new ChatStorage()
         this.storage.init()
+        this.authRuntime = options.authRuntime
+        this.corsOrigins = options.corsOrigins ?? parseCorsOrigins(process.env.CORS_ORIGINS || '*')
+        this.trustProxy = options.trustProxy ?? parseBooleanFlag(process.env.TRUST_PROXY)
 
         this.io = new Server(httpServer, {
-            cors: { origin: '*' }
+            cors: { origin: getSocketIoCorsOrigin(this.corsOrigins) },
+            allowRequest: (req, callback) => {
+                const origin = getRequestOrigin(req)
+                if (!isOriginAllowed(this.corsOrigins, origin)) {
+                    logSecurityEvent('group_chat.origin_rejected', {
+                        ip: extractClientIp(req, { trustProxy: this.trustProxy }),
+                        origin,
+                        url: req.url || '',
+                    })
+                    callback(null, false)
+                    return
+                }
+
+                callback(null, true)
+            },
         })
         this.nsp = this.io.of('/group-chat')
         this.nsp.use(this.authMiddleware.bind(this))
@@ -604,12 +634,16 @@ export class GroupChatServer {
     // ─── Auth ───────────────────────────────────────────────────
 
     private async authMiddleware(socket: Socket, next: (err?: Error) => void): Promise<void> {
-        const authToken = await getToken()
+        const authRuntime = this.authRuntime ?? await getAuthRuntime()
         const token = socket.handshake.auth.token || socket.handshake.query.token || ''
-        if (authToken) {
-            if (token !== authToken) {
-                return next(new Error('Unauthorized'))
-            }
+        if (!isTokenAuthorized(authRuntime, String(token || ''))) {
+            const requestLike = (socket.request as any) || (socket.handshake as any)
+            logSecurityEvent('group_chat.auth_rejected', {
+                ip: extractClientIp(requestLike, { trustProxy: this.trustProxy }),
+                origin: getRequestOrigin(requestLike),
+                url: socket.handshake.url || '',
+            })
+            return next(new Error('Unauthorized'))
         }
         next()
     }

@@ -2,8 +2,12 @@ import { WebSocketServer } from 'ws'
 import type { Server as HttpServer } from 'http'
 import { accessSync, chmodSync, constants as fsConstants, existsSync } from 'fs'
 import { dirname, join } from 'path'
-import { getToken } from '../../services/auth'
+import type { AuthRuntime } from '../../services/auth'
+import type { CorsOriginPolicy } from '../../services/network-security'
+import { getAuthRuntime, isTokenAuthorized } from '../../services/auth'
 import { logger } from '../../services/logger'
+import { extractClientIp, getRequestOrigin, isOriginAllowed, parseBooleanFlag, parseCorsOrigins } from '../../services/network-security'
+import { logSecurityEvent } from '../../services/security-events'
 
 let pty: any = null
 
@@ -110,7 +114,13 @@ function createSession(shell: string): PtySession {
 
 // ─── WebSocket server setup ─────────────────────────────────────
 
-export function setupTerminalWebSocket(httpServer: HttpServer) {
+interface TerminalWebSocketOptions {
+  authRuntime?: AuthRuntime
+  corsOrigins?: CorsOriginPolicy
+  trustProxy?: boolean
+}
+
+export function setupTerminalWebSocket(httpServer: HttpServer, options: TerminalWebSocketOptions = {}) {
   if (!pty) {
     logger.warn('node-pty not available, skipping terminal WebSocket setup')
     return
@@ -118,6 +128,8 @@ export function setupTerminalWebSocket(httpServer: HttpServer) {
 
   const wss = new WebSocketServer({ noServer: true })
   const defaultShell = findShell()
+  const corsOrigins = options.corsOrigins ?? parseCorsOrigins(process.env.CORS_ORIGINS || '*')
+  const trustProxy = options.trustProxy ?? parseBooleanFlag(process.env.TRUST_PROXY)
 
   httpServer.on('upgrade', async (req, socket, head) => {
     const url = new URL(req.url || '', `http://${req.headers.host}`)
@@ -125,15 +137,29 @@ export function setupTerminalWebSocket(httpServer: HttpServer) {
       return
     }
 
-    // Auth check
-    const authToken = await getToken()
-    if (authToken) {
-      const token = url.searchParams.get('token') || ''
-      if (token !== authToken) {
-        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
-        socket.destroy()
-        return
-      }
+    const origin = getRequestOrigin(req)
+    if (!isOriginAllowed(corsOrigins, origin)) {
+      logSecurityEvent('terminal.origin_rejected', {
+        ip: extractClientIp(req, { trustProxy }),
+        origin,
+        url: req.url || '',
+      })
+      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n')
+      socket.destroy()
+      return
+    }
+
+    const authRuntime = options.authRuntime ?? await getAuthRuntime()
+    const token = url.searchParams.get('token') || ''
+    if (!isTokenAuthorized(authRuntime, token)) {
+      logSecurityEvent('terminal.auth_rejected', {
+        ip: extractClientIp(req, { trustProxy }),
+        origin,
+        url: req.url || '',
+      })
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
+      socket.destroy()
+      return
     }
 
     wss.handleUpgrade(req, socket, head, (ws) => {

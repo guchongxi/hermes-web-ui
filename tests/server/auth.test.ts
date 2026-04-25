@@ -48,41 +48,50 @@ describe('Auth Service', () => {
     process.env = originalEnv
   })
 
-  describe('getToken', () => {
-    it('returns null when AUTH_DISABLED=1', async () => {
+  describe('getAuthRuntime', () => {
+    it('fails fast when AUTH_DISABLED=1 without explicit insecure override', async () => {
       process.env.AUTH_DISABLED = '1'
-      const { getToken, mocks } = await loadAuth()
+      const { getAuthRuntime, mocks } = await loadAuth()
 
-      const token = await getToken()
+      await expect(getAuthRuntime()).rejects.toThrow(/ALLOW_INSECURE_NO_AUTH/i)
 
-      expect(token).toBeNull()
       expect(mocks.readFile).not.toHaveBeenCalled()
     })
 
-    it('returns null when AUTH_DISABLED=true', async () => {
+    it('enters insecure-no-auth mode only when both flags are enabled', async () => {
       process.env.AUTH_DISABLED = 'true'
-      const { getToken } = await loadAuth()
+      process.env.ALLOW_INSECURE_NO_AUTH = 'true'
+      const { getAuthRuntime } = await loadAuth()
 
-      await expect(getToken()).resolves.toBeNull()
+      await expect(getAuthRuntime()).resolves.toEqual({
+        mode: 'insecure-no-auth',
+        token: null,
+      })
     })
 
     it('returns AUTH_TOKEN env var if set', async () => {
       process.env.AUTH_TOKEN = 'my-custom-token'
-      const { getToken, mocks } = await loadAuth()
+      const { getAuthRuntime, mocks } = await loadAuth()
 
-      const token = await getToken()
+      const runtime = await getAuthRuntime()
 
-      expect(token).toBe('my-custom-token')
+      expect(runtime).toEqual({
+        mode: 'enabled',
+        token: 'my-custom-token',
+      })
       expect(mocks.readFile).not.toHaveBeenCalled()
     })
 
     it('reads token from file if it exists', async () => {
       const readFile = vi.fn().mockResolvedValue('file-token\n')
-      const { getToken, tokenFile } = await loadAuth({ readFile })
+      const { getAuthRuntime, tokenFile } = await loadAuth({ readFile })
 
-      const token = await getToken()
+      const runtime = await getAuthRuntime()
 
-      expect(token).toBe('file-token')
+      expect(runtime).toEqual({
+        mode: 'enabled',
+        token: 'file-token',
+      })
       expect(readFile).toHaveBeenCalledWith(tokenFile, 'utf-8')
     })
 
@@ -90,11 +99,14 @@ describe('Auth Service', () => {
       const readFile = vi.fn().mockRejectedValue(new Error('ENOENT'))
       const writeFile = vi.fn()
       const mkdir = vi.fn()
-      const { getToken, appHome, tokenFile } = await loadAuth({ readFile, writeFile, mkdir })
+      const { getAuthRuntime, appHome, tokenFile } = await loadAuth({ readFile, writeFile, mkdir })
 
-      const token = await getToken()
+      const runtime = await getAuthRuntime()
 
-      expect(token).toMatch(/^[a-f0-9]{64}$/)
+      expect(runtime).toEqual({
+        mode: 'enabled',
+        token: expect.stringMatching(/^[a-f0-9]{64}$/),
+      })
       expect(mkdir).toHaveBeenCalledWith(appHome, { recursive: true })
       expect(writeFile).toHaveBeenCalledWith(
         tokenFile,
@@ -104,10 +116,37 @@ describe('Auth Service', () => {
     })
   })
 
+  describe('getToken', () => {
+    it('returns null in insecure-no-auth mode', async () => {
+      process.env.AUTH_DISABLED = '1'
+      process.env.ALLOW_INSECURE_NO_AUTH = '1'
+      const { getToken } = await loadAuth()
+
+      await expect(getToken()).resolves.toBeNull()
+    })
+  })
+
+  describe('describeAuthRuntime', () => {
+    it('returns a token-free startup summary for enabled auth', async () => {
+      const { describeAuthRuntime } = await loadAuth()
+
+      expect(describeAuthRuntime({ mode: 'enabled', token: 'secret-token' })).toBe('Auth enabled')
+    })
+
+    it('returns a high-risk warning for insecure-no-auth mode without leaking token fields', async () => {
+      const { describeAuthRuntime } = await loadAuth()
+
+      const summary = describeAuthRuntime({ mode: 'insecure-no-auth', token: null })
+
+      expect(summary).toMatch(/WARNING/i)
+      expect(summary).not.toMatch(/token|authorization/i)
+    })
+  })
+
   describe('requireAuth', () => {
-    it('allows all requests when auth is disabled (null token)', async () => {
+    it('allows all requests in insecure-no-auth mode', async () => {
       const { requireAuth } = await loadAuth()
-      const middleware = requireAuth(null)
+      const middleware = requireAuth({ mode: 'insecure-no-auth', token: null })
       const ctx = createMockCtx('/api/hermes/sessions')
       const next = vi.fn(async () => {})
 
@@ -118,7 +157,7 @@ describe('Auth Service', () => {
 
     it('skips /health', async () => {
       const { requireAuth } = await loadAuth()
-      const middleware = requireAuth('secret')
+      const middleware = requireAuth({ mode: 'enabled', token: 'secret' })
       const ctx = createMockCtx('/health')
       const next = vi.fn(async () => {})
 
@@ -130,7 +169,7 @@ describe('Auth Service', () => {
 
     it('skips /webhook because it is treated as a public non-API path', async () => {
       const { requireAuth } = await loadAuth()
-      const middleware = requireAuth('secret')
+      const middleware = requireAuth({ mode: 'enabled', token: 'secret' })
       const ctx = createMockCtx('/webhook')
       const next = vi.fn(async () => {})
 
@@ -142,7 +181,7 @@ describe('Auth Service', () => {
 
     it('skips non-API paths', async () => {
       const { requireAuth } = await loadAuth()
-      const middleware = requireAuth('secret')
+      const middleware = requireAuth({ mode: 'enabled', token: 'secret' })
       const ctx = createMockCtx('/index.html')
       const next = vi.fn(async () => {})
 
@@ -154,7 +193,7 @@ describe('Auth Service', () => {
 
     it('requires auth for /upload', async () => {
       const { requireAuth } = await loadAuth()
-      const middleware = requireAuth('secret')
+      const middleware = requireAuth({ mode: 'enabled', token: 'secret' })
       const ctx = createMockCtx('/upload')
       const next = vi.fn(async () => {})
 
@@ -167,7 +206,7 @@ describe('Auth Service', () => {
 
     it('rejects request without auth header for protected API routes', async () => {
       const { requireAuth } = await loadAuth()
-      const middleware = requireAuth('secret')
+      const middleware = requireAuth({ mode: 'enabled', token: 'secret' })
       const ctx = createMockCtx('/api/hermes/sessions')
       const next = vi.fn(async () => {})
 
@@ -179,7 +218,7 @@ describe('Auth Service', () => {
 
     it('rejects request with the wrong bearer token', async () => {
       const { requireAuth } = await loadAuth()
-      const middleware = requireAuth('secret')
+      const middleware = requireAuth({ mode: 'enabled', token: 'secret' })
       const ctx = createMockCtx('/api/hermes/sessions', { authorization: 'Bearer wrong' })
       const next = vi.fn(async () => {})
 
@@ -191,7 +230,7 @@ describe('Auth Service', () => {
 
     it('allows request with the correct bearer token', async () => {
       const { requireAuth } = await loadAuth()
-      const middleware = requireAuth('secret')
+      const middleware = requireAuth({ mode: 'enabled', token: 'secret' })
       const ctx = createMockCtx('/api/hermes/sessions', { authorization: 'Bearer secret' })
       const next = vi.fn(async () => {})
 
@@ -202,7 +241,7 @@ describe('Auth Service', () => {
 
     it('allows request with the correct query token', async () => {
       const { requireAuth } = await loadAuth()
-      const middleware = requireAuth('secret')
+      const middleware = requireAuth({ mode: 'enabled', token: 'secret' })
       const ctx = createMockCtx('/api/hermes/sessions', {}, { token: 'secret' })
       const next = vi.fn(async () => {})
 
@@ -213,7 +252,7 @@ describe('Auth Service', () => {
 
     it('returns 401 JSON on auth failure', async () => {
       const { requireAuth } = await loadAuth()
-      const middleware = requireAuth('secret')
+      const middleware = requireAuth({ mode: 'enabled', token: 'secret' })
       const ctx = createMockCtx('/api/hermes/sessions', { authorization: 'Bearer wrong' })
       const next = vi.fn(async () => {})
 
@@ -222,6 +261,52 @@ describe('Auth Service', () => {
       expect(ctx.status).toBe(401)
       expect(ctx.set).toHaveBeenCalledWith('Content-Type', 'application/json')
       expect(ctx.body).toEqual({ error: 'Unauthorized' })
+    })
+  })
+
+  describe('network security helpers', () => {
+    it('allows missing origin for non-browser clients', async () => {
+      vi.resetModules()
+      const { parseCorsOrigins, isOriginAllowed } = await import('../../packages/server/src/services/network-security')
+
+      const policy = parseCorsOrigins('https://allowed.example')
+
+      expect(isOriginAllowed(policy, undefined)).toBe(true)
+      expect(isOriginAllowed(policy, null)).toBe(true)
+    })
+
+    it('rejects origins outside the configured allowlist', async () => {
+      vi.resetModules()
+      const { parseCorsOrigins, isOriginAllowed } = await import('../../packages/server/src/services/network-security')
+
+      const policy = parseCorsOrigins('https://allowed.example, https://console.example')
+
+      expect(isOriginAllowed(policy, 'https://allowed.example')).toBe(true)
+      expect(isOriginAllowed(policy, 'https://blocked.example')).toBe(false)
+    })
+
+    it('prefers remoteAddress unless trust proxy is explicitly enabled', async () => {
+      vi.resetModules()
+      const { extractClientIp } = await import('../../packages/server/src/services/network-security')
+
+      const ip = extractClientIp({
+        socket: { remoteAddress: '10.0.0.2' },
+        headers: { 'x-forwarded-for': '203.0.113.7, 203.0.113.8' },
+      })
+
+      expect(ip).toBe('10.0.0.2')
+    })
+
+    it('uses the first forwarded IP only when trust proxy is enabled', async () => {
+      vi.resetModules()
+      const { extractClientIp } = await import('../../packages/server/src/services/network-security')
+
+      const ip = extractClientIp({
+        socket: { remoteAddress: '10.0.0.2' },
+        headers: { 'x-forwarded-for': '203.0.113.7, 203.0.113.8' },
+      }, { trustProxy: true })
+
+      expect(ip).toBe('203.0.113.7')
     })
   })
 })
