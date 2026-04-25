@@ -33,7 +33,7 @@ export default {
     setupDescription: 'Configure un nombre de usuario y contrasena para un inicio de sesion rapido. El token de acceso seguira funcionando.',
     removeConfirm: 'Esta seguro de eliminar el login con contrasena? Necesitara usar el token de acceso.',
     passwordLoginNotConfigured: 'Login con contrasena no configurado',
-    passwordLoginConfigured: 'Login con contrasena habilitado ({username})',
+    passwordLoginConfigured: 'Login con contrasena habilitado',
   },
 
   // Common

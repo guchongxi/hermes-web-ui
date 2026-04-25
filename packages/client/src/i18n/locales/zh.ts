@@ -33,7 +33,7 @@ export default {
     setupDescription: '设置用户名和密码以便快速登录。访问令牌仍可继续使用。',
     removeConfirm: '确定要移除密码登录吗？移除后需要使用访问令牌登录。',
     passwordLoginNotConfigured: '密码登录未配置',
-    passwordLoginConfigured: '密码登录已启用（{username}）',
+    passwordLoginConfigured: '密码登录已启用',
   },
 
   // 通用

@@ -1,0 +1,218 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { authStatus, login } from '../../packages/server/src/controllers/auth'
+import { resetLoginRateLimitStore } from '../../packages/server/src/services/login-rate-limit'
+
+const credentialsMocks = vi.hoisted(() => ({
+  getCredentials: vi.fn(),
+  setCredentials: vi.fn(),
+  verifyCredentials: vi.fn(),
+  deleteCredentials: vi.fn(),
+}))
+
+const authMocks = vi.hoisted(() => ({
+  getToken: vi.fn(),
+}))
+
+vi.mock('../../packages/server/src/services/credentials', () => credentialsMocks)
+vi.mock('../../packages/server/src/services/auth', () => authMocks)
+
+function createMockCtx({
+  body = {},
+  remoteAddress = '127.0.0.1',
+  forwardedFor,
+}: {
+  body?: Record<string, unknown>
+  remoteAddress?: string
+  forwardedFor?: string
+} = {}) {
+  const headers: Record<string, string> = {}
+  if (forwardedFor) {
+    headers['x-forwarded-for'] = forwardedFor
+  }
+
+  return {
+    request: {
+      body,
+      headers,
+      socket: { remoteAddress },
+      connection: { remoteAddress },
+    },
+    status: 200,
+    body: null as unknown,
+    set: vi.fn(),
+  }
+}
+
+describe('auth controller', () => {
+  const originalTrustProxy = process.env.TRUST_PROXY
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetLoginRateLimitStore()
+    delete process.env.TRUST_PROXY
+  })
+
+  afterEach(() => {
+    if (originalTrustProxy === undefined) {
+      delete process.env.TRUST_PROXY
+      return
+    }
+
+    process.env.TRUST_PROXY = originalTrustProxy
+  })
+
+  it('returns auth status without exposing the configured username', async () => {
+    credentialsMocks.getCredentials.mockResolvedValue({
+      username: 'admin',
+      password_hash: 'hash',
+      salt: 'salt',
+      created_at: Date.now(),
+    })
+    const ctx = createMockCtx()
+
+    await authStatus(ctx as any)
+
+    expect(ctx.body).toEqual({
+      hasPasswordLogin: true,
+      username: null,
+    })
+  })
+
+  it('returns 401 for an incorrect password', async () => {
+    credentialsMocks.verifyCredentials.mockResolvedValue(false)
+    const ctx = createMockCtx({
+      body: {
+        username: 'admin',
+        password: 'wrong-password',
+      },
+    })
+
+    await login(ctx as any)
+
+    expect(ctx.status).toBe(401)
+    expect(ctx.body).toEqual({ error: 'Invalid username or password' })
+    expect(authMocks.getToken).not.toHaveBeenCalled()
+  })
+
+  it('returns the static token for a successful login', async () => {
+    credentialsMocks.verifyCredentials.mockResolvedValue(true)
+    authMocks.getToken.mockResolvedValue('test-token')
+    const ctx = createMockCtx({
+      body: {
+        username: 'admin',
+        password: 'correct-password',
+      },
+    })
+
+    await login(ctx as any)
+
+    expect(ctx.status).toBe(200)
+    expect(ctx.body).toEqual({ token: 'test-token' })
+  })
+
+  it('rate limits repeated failed logins from the same IP', async () => {
+    credentialsMocks.verifyCredentials.mockResolvedValue(false)
+
+    for (let index = 0; index < 5; index += 1) {
+      const ctx = createMockCtx({
+        body: {
+          username: 'admin',
+          password: `wrong-${index}`,
+        },
+      })
+
+      await login(ctx as any)
+      expect(ctx.status).toBe(401)
+    }
+
+    const limitedCtx = createMockCtx({
+      body: {
+        username: 'admin',
+        password: 'wrong-final',
+      },
+    })
+
+    await login(limitedCtx as any)
+
+    expect(limitedCtx.status).toBe(429)
+    expect(limitedCtx.body).toEqual({ error: 'Too many login attempts. Please try again later.' })
+    expect(limitedCtx.set).toHaveBeenCalledWith('Retry-After', expect.any(String))
+    expect(credentialsMocks.verifyCredentials).toHaveBeenCalledTimes(5)
+  })
+
+  it('ignores x-forwarded-for when TRUST_PROXY is disabled', async () => {
+    credentialsMocks.verifyCredentials.mockResolvedValue(false)
+
+    for (let index = 0; index < 5; index += 1) {
+      const ctx = createMockCtx({
+        body: {
+          username: 'admin',
+          password: `wrong-${index}`,
+        },
+        remoteAddress: '10.0.0.2',
+        forwardedFor: `203.0.113.${index + 1}`,
+      })
+
+      await login(ctx as any)
+      expect(ctx.status).toBe(401)
+    }
+
+    const limitedCtx = createMockCtx({
+      body: {
+        username: 'admin',
+        password: 'wrong-final',
+      },
+      remoteAddress: '10.0.0.2',
+      forwardedFor: '198.51.100.10',
+    })
+
+    await login(limitedCtx as any)
+
+    expect(limitedCtx.status).toBe(429)
+  })
+
+  it('uses the first forwarded IP when TRUST_PROXY is enabled', async () => {
+    process.env.TRUST_PROXY = '1'
+    credentialsMocks.verifyCredentials.mockResolvedValue(false)
+
+    for (let index = 0; index < 5; index += 1) {
+      const ctx = createMockCtx({
+        body: {
+          username: 'admin',
+          password: `wrong-${index}`,
+        },
+        remoteAddress: '10.0.0.2',
+        forwardedFor: '203.0.113.7, 203.0.113.8',
+      })
+
+      await login(ctx as any)
+      expect(ctx.status).toBe(401)
+    }
+
+    const differentForwardedIpCtx = createMockCtx({
+      body: {
+        username: 'admin',
+        password: 'wrong-different-forwarded-ip',
+      },
+      remoteAddress: '10.0.0.2',
+      forwardedFor: '198.51.100.10, 203.0.113.8',
+    })
+
+    await login(differentForwardedIpCtx as any)
+
+    expect(differentForwardedIpCtx.status).toBe(401)
+
+    const limitedCtx = createMockCtx({
+      body: {
+        username: 'admin',
+        password: 'wrong-same-forwarded-ip',
+      },
+      remoteAddress: '10.0.0.2',
+      forwardedFor: '203.0.113.7, 203.0.113.99',
+    })
+
+    await login(limitedCtx as any)
+
+    expect(limitedCtx.status).toBe(429)
+  })
+})

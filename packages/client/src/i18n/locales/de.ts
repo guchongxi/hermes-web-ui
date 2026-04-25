@@ -33,7 +33,7 @@ export default {
     setupDescription: 'Richten Sie Benutzername und Passwort fur bequemes Login ein. Der Zugangs-Token bleibt als Backup verfugbar.',
     removeConfirm: 'Mochten Sie das Passwort-Login wirklich entfernen? Sie mussen dann den Zugangs-Token verwenden.',
     passwordLoginNotConfigured: 'Passwort-Login ist nicht konfiguriert',
-    passwordLoginConfigured: 'Passwort-Login aktiviert ({username})',
+    passwordLoginConfigured: 'Passwort-Login aktiviert',
   },
 
   // Common
