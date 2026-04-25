@@ -537,6 +537,8 @@ export default {
     closeSession: '关闭此会话？',
     sessionExited: '已退出',
     processExited: '进程已退出，代码 {code}',
+    wsConnectFailed:
+      '终端连接失败（请检查反代 WebSocket、登录 token，或 Docker 是否已正确编译 node-pty）',
   },
 
   // 群聊

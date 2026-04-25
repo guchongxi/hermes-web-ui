@@ -111,13 +111,8 @@ function createSession(shell: string): PtySession {
 // ─── WebSocket server setup ─────────────────────────────────────
 
 export function setupTerminalWebSocket(httpServer: HttpServer) {
-  if (!pty) {
-    logger.warn('node-pty not available, skipping terminal WebSocket setup')
-    return
-  }
-
-  const wss = new WebSocketServer({ noServer: true })
-  const defaultShell = findShell()
+  const wss = pty ? new WebSocketServer({ noServer: true }) : null
+  const defaultShell = pty ? findShell() : ''
 
   httpServer.on('upgrade', async (req, socket, head) => {
     const url = new URL(req.url || '', `http://${req.headers.host}`)
@@ -136,10 +131,22 @@ export function setupTerminalWebSocket(httpServer: HttpServer) {
       }
     }
 
+    if (!pty || !wss) {
+      logger.warn('Terminal WebSocket 被拒绝：node-pty 未加载')
+      socket.write('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n')
+      socket.destroy()
+      return
+    }
+
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit('connection', ws, req)
     })
   })
+
+  if (!pty || !wss) {
+    logger.warn('node-pty 不可用，终端功能已禁用（升级请求将返回 503）')
+    return
+  }
 
   wss.on('connection', (ws) => {
     const conn: Connection = {

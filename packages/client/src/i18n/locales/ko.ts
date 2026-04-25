@@ -495,6 +495,8 @@ export default {
     closeSession: '이 세션을 닫으시겠습니까?',
     sessionExited: '종료됨',
     processExited: '프로세스가 종료되었습니다 (코드 {code})',
+    wsConnectFailed:
+      '터미널 연결에 실패했습니다. WebSocket 프록시, 인증 토큰, node-pty 빌드(Docker 재빌드 등)를 확인하세요.',
   },
 
   // 사용량

@@ -535,6 +535,8 @@ export default {
     closeSession: 'Close this session?',
     sessionExited: 'Exited',
     processExited: 'Process exited with code {code}',
+    wsConnectFailed:
+      'Terminal connection failed. Check WebSocket proxy, auth token, or that node-pty is built (e.g. Docker rebuild).',
   },
 
   // Group Chat

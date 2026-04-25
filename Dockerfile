@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     make \
     g++ \
+    python3 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN ARCH=$(dpkg --print-architecture) \
@@ -26,7 +27,8 @@ RUN npm install --ignore-scripts
 
 COPY . .
 
-RUN npm run build && npm prune --omit=dev
+# --ignore-scripts 会跳过 node-pty 的安装脚本，需显式编译原生模块，否则终端 WebSocket 无法建立
+RUN npm rebuild node-pty && npm run build && npm prune --omit=dev
 
 ENV NODE_ENV=production
 ENV HOME=/home/agent

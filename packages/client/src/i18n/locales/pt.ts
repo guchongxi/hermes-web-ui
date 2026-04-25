@@ -495,6 +495,8 @@ export default {
     closeSession: 'Fechar esta sessao?',
     sessionExited: 'Encerrada',
     processExited: 'Processo encerrado com codigo {code}',
+    wsConnectFailed:
+      'Falha na conexao do terminal. Verifique o proxy WebSocket, o token ou se o node-pty foi compilado (ex.: rebuild Docker).',
   },
 
   // Usage

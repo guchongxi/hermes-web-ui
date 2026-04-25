@@ -31,15 +31,16 @@ This compose file runs two services:
 
 All key runtime settings are configured from compose variables.
 
-| Variable | Default | Description |
-|---|---|---|
-| `PORT` | `6060` | Web UI listen port |
-| `UPSTREAM` | `http://hermes-agent:8642` | Hermes gateway URL (container internal) |
-| `HERMES_BIN` | `/opt/hermes/.venv/bin/hermes` | Path to Hermes CLI binary |
-| `HERMES_AGENT_IMAGE` | `nousresearch/hermes-agent:latest` | Hermes Agent base image |
-| `WEBUI_IMAGE` | `hermes-web-ui-local:latest` | Web UI image (set to `ekkoye8888/hermes-web-ui:latest` to use pre-built) |
-| `HERMES_DATA_DIR` | `./hermes_data` | Hermes runtime data directory |
-| `AUTH_DISABLED` | `false` | Set to `true` to disable login authentication |
+| Variable              | Default                            | Description                                                                        |
+| --------------------- | ---------------------------------- | ---------------------------------------------------------------------------------- |
+| `PORT`                | `6060`                             | Web UI listen port                                                                 |
+| `UPSTREAM`            | `http://hermes-agent:8642`         | Hermes gateway URL (container internal)                                            |
+| `HERMES_BIN`          | `/opt/hermes/.venv/bin/hermes`     | Path to Hermes CLI binary                                                          |
+| `PATH` (compose 默认) | 含 `/opt/hermes/.venv/bin` 前缀    | 使容器内与 Web UI 终端里直接输入 `hermes` 能解析到 CLI（与 `HERMES_BIN` 目录一致） |
+| `HERMES_AGENT_IMAGE`  | `nousresearch/hermes-agent:latest` | Hermes Agent base image                                                            |
+| `WEBUI_IMAGE`         | `hermes-web-ui-local:latest`       | Web UI image (set to `ekkoye8888/hermes-web-ui:latest` to use pre-built)           |
+| `HERMES_DATA_DIR`     | `./hermes_data`                    | Hermes runtime data directory                                                      |
+| `AUTH_DISABLED`       | `false`                            | Set to `true` to disable login authentication                                      |
 
 Override variables directly from shell:
 
@@ -59,10 +60,10 @@ AUTH_DISABLED=false
 
 ## Data Persistence
 
-| Path | Description |
-|---|---|
+| Path                                   | Description                                      |
+| -------------------------------------- | ------------------------------------------------ |
 | `${HERMES_DATA_DIR}` (`./hermes_data`) | Hermes runtime data (sessions, config, profiles) |
-| `${HERMES_DATA_DIR}/hermes-web-ui` | Web UI data (auth token, etc.) |
+| `${HERMES_DATA_DIR}/hermes-web-ui`     | Web UI data (auth token, etc.)                   |
 
 - Hermes data persists in `./hermes_data`, mapped to `/home/agent/.hermes` in the container.
 - Web UI data persists in `./hermes_data/hermes-web-ui/`, mapped to `/root/.hermes-web-ui` in the container.
@@ -71,10 +72,10 @@ AUTH_DISABLED=false
 
 ## Port Mapping
 
-| Port | Service | Description |
-|---|---|---|
-| `${PORT}` (6060) | hermes-webui | Web UI dashboard |
-| 8642-8670 | hermes-agent | Hermes Agent gateway ports (for multi-profile) |
+| Port             | Service      | Description                                    |
+| ---------------- | ------------ | ---------------------------------------------- |
+| `${PORT}` (6060) | hermes-webui | Web UI dashboard                               |
+| 8642-8670        | hermes-agent | Hermes Agent gateway ports (for multi-profile) |
 
 ## Code Runtime Behavior
 

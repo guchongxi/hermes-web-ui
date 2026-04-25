@@ -495,6 +495,8 @@ export default {
     closeSession: 'このセッションを閉じますか？',
     sessionExited: '終了しました',
     processExited: 'プロセスが終了しました（コード {code}）',
+    wsConnectFailed:
+      'ターミナル接続に失敗しました。WebSocket プロキシ・認証トークン・node-pty のビルド（Docker の再ビルドなど）を確認してください。',
   },
 
   // 使用統計
