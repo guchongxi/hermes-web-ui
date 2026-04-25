@@ -137,4 +137,15 @@ export async function bootstrap() {
   startVersionCheck()
 }
 
-bootstrap()
+export async function startServer(): Promise<void> {
+  try {
+    await bootstrap()
+  } catch (err) {
+    logger.fatal({ err }, 'Failed to bootstrap server')
+    process.exit(1)
+  }
+}
+
+if (require.main === module) {
+  void startServer()
+}

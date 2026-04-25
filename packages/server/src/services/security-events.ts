@@ -46,9 +46,13 @@ function sanitizeValue(value: unknown): unknown {
   return Object.fromEntries(sanitizedEntries)
 }
 
+function sanitizeObject(details: PlainObject): PlainObject {
+  return sanitizeValue(details) as PlainObject
+}
+
 export function logSecurityEvent(event: string, details: PlainObject = {}): void {
   logger.warn({
     event,
-    ...sanitizeValue(details),
+    ...sanitizeObject(details),
   }, `[security] ${event}`)
 }
