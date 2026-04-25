@@ -17,6 +17,9 @@ export async function readRequestBody(ctx: any, limitBytes: number, errorMessage
   for await (const chunk of ctx.req) {
     totalSize += chunk.length
     if (totalSize > limitBytes) {
+      if (typeof ctx.req?.destroy === 'function' && !ctx.req.destroyed) {
+        ctx.req.destroy()
+      }
       throw new RequestBodyTooLargeError(errorMessage, errorCode)
     }
     chunks.push(chunk)

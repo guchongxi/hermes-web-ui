@@ -1,4 +1,3 @@
-import { Readable } from 'stream'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 function createMultipartBody(boundary: string, filename: string, content: Buffer): Buffer {
@@ -9,6 +8,24 @@ function createMultipartBody(boundary: string, filename: string, content: Buffer
     content,
     Buffer.from(`\r\n--${boundary}--\r\n`),
   ])
+}
+
+function createMockRequest(chunks: Buffer[]) {
+  const destroy = vi.fn()
+  let destroyed = false
+
+  return {
+    destroy,
+    get destroyed() {
+      return destroyed
+    },
+    async *[Symbol.asyncIterator]() {
+      for (const chunk of chunks) {
+        yield chunk
+      }
+      destroyed = true
+    },
+  }
 }
 
 async function loadUploadHandler(mocks?: {
@@ -50,10 +67,11 @@ describe('files upload request limits', () => {
     const oversizedContent = Buffer.alloc(10 * 1024 * 1024 + 1, 0x61)
     const rawBody = createMultipartBody(boundary, 'huge.bin', oversizedContent)
     const { handler, provider, createFileProvider } = await loadUploadHandler()
+    const req = createMockRequest([rawBody])
 
     const ctx: any = {
       query: { path: 'uploads' },
-      req: Readable.from([rawBody]),
+      req,
       status: undefined,
       body: undefined,
       get(name: string) {
@@ -65,6 +83,7 @@ describe('files upload request limits', () => {
 
     expect(ctx.status).toBe(413)
     expect(ctx.body).toMatchObject({ code: 'file_too_large' })
+    expect(req.destroy).toHaveBeenCalledTimes(1)
     expect(createFileProvider).not.toHaveBeenCalled()
     expect(provider.writeFile).not.toHaveBeenCalled()
   })

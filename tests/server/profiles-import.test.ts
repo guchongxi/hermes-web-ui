@@ -1,4 +1,3 @@
-import { Readable } from 'stream'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 function createMultipartBody(boundary: string, filename: string, content: Buffer): Buffer {
@@ -9,6 +8,24 @@ function createMultipartBody(boundary: string, filename: string, content: Buffer
     content,
     Buffer.from(`\r\n--${boundary}--\r\n`),
   ])
+}
+
+function createMockRequest(chunks: Buffer[]) {
+  const destroy = vi.fn()
+  let destroyed = false
+
+  return {
+    destroy,
+    get destroyed() {
+      return destroyed
+    },
+    async *[Symbol.asyncIterator]() {
+      for (const chunk of chunks) {
+        yield chunk
+      }
+      destroyed = true
+    },
+  }
 }
 
 async function loadImportProfile(overrides?: {
@@ -74,9 +91,10 @@ describe('profiles import temp file handling', () => {
     const boundary = '----codex-profile-boundary'
     const rawBody = createMultipartBody(boundary, 'client-name.archive.tar.gz', Buffer.from('archive-data'))
     const { importProfileHandler, writeFile, hermesImportProfile, unlink } = await loadImportProfile()
+    const req = createMockRequest([rawBody])
 
     const ctx: any = {
-      req: Readable.from([rawBody]),
+      req,
       status: undefined,
       body: undefined,
       get(name: string) {
@@ -101,9 +119,10 @@ describe('profiles import temp file handling', () => {
     const { importProfileHandler, writeFile, unlink } = await loadImportProfile({
       importProfileImpl: vi.fn().mockRejectedValue(new Error('import failed')),
     })
+    const req = createMockRequest([rawBody])
 
     const ctx: any = {
-      req: Readable.from([rawBody]),
+      req,
       status: undefined,
       body: undefined,
       get(name: string) {
@@ -117,5 +136,32 @@ describe('profiles import temp file handling', () => {
     expect(ctx.status).toBe(500)
     expect(ctx.body).toMatchObject({ error: 'import failed' })
     expect(unlink).toHaveBeenCalledWith(archivePath)
+  })
+
+  it('请求体超过 100 MiB 时返回 413 并终止请求流', async () => {
+    const boundary = '----codex-profile-boundary'
+    const { importProfileHandler, hermesImportProfile, writeFile, unlink } = await loadImportProfile()
+    const req = createMockRequest([
+      Buffer.alloc(64 * 1024 * 1024, 0x61),
+      Buffer.alloc(36 * 1024 * 1024 + 1, 0x62),
+    ])
+
+    const ctx: any = {
+      req,
+      status: undefined,
+      body: undefined,
+      get(name: string) {
+        return name === 'content-type' ? `multipart/form-data; boundary=${boundary}` : ''
+      },
+    }
+
+    await importProfileHandler(ctx)
+
+    expect(ctx.status).toBe(413)
+    expect(ctx.body).toMatchObject({ code: 'profile_import_too_large' })
+    expect(req.destroy).toHaveBeenCalledTimes(1)
+    expect(writeFile).not.toHaveBeenCalled()
+    expect(unlink).not.toHaveBeenCalled()
+    expect(hermesImportProfile).not.toHaveBeenCalled()
   })
 })
