@@ -309,4 +309,30 @@ describe('Auth Service', () => {
       expect(ip).toBe('203.0.113.7')
     })
   })
+
+  describe('security event logging', () => {
+    it('preserves origin and ip while redacting token-bearing urls', async () => {
+      vi.resetModules()
+      const warn = vi.fn()
+      vi.doMock('../../packages/server/src/services/logger', () => ({
+        logger: { warn },
+      }))
+
+      const { logSecurityEvent } = await import('../../packages/server/src/services/security-events')
+
+      logSecurityEvent('terminal.origin_rejected', {
+        origin: 'https://blocked.example',
+        ip: '127.0.0.1',
+        url: '/api/hermes/terminal?token=secret',
+      })
+
+      expect(warn).toHaveBeenCalledOnce()
+      expect(warn.mock.calls[0][0]).toMatchObject({
+        event: 'terminal.origin_rejected',
+        origin: 'https://blocked.example',
+        ip: '127.0.0.1',
+        url: '/api/hermes/terminal',
+      })
+    })
+  })
 })

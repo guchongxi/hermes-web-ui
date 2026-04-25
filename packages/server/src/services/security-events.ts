@@ -10,19 +10,25 @@ const REDACTED_KEYS = new Set([
   'id_token',
 ])
 
+function hasSensitiveQueryParam(value: string): boolean {
+  return /(?:^|[?&])(token|access_token|refresh_token|id_token)=/i.test(value)
+}
+
 function sanitizeUrl(value: string): string {
   try {
     const url = new URL(value, 'http://localhost')
-    url.searchParams.delete('token')
+    for (const key of REDACTED_KEYS) {
+      url.searchParams.delete(key)
+    }
     return `${url.pathname}${url.search}${url.hash}`
   } catch {
-    return value.replace(/([?&])token=[^&]*/gi, '$1token=[REDACTED]')
+    return value.replace(/([?&])(token|access_token|refresh_token|id_token)=[^&]*/gi, '')
   }
 }
 
 function sanitizeValue(value: unknown): unknown {
   if (typeof value === 'string') {
-    return sanitizeUrl(value)
+    return hasSensitiveQueryParam(value) ? sanitizeUrl(value) : value
   }
 
   if (Array.isArray(value)) {
