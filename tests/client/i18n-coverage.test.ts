@@ -66,6 +66,11 @@ describe('i18n locale coverage', () => {
     expect(missing).toEqual([])
   })
 
+  it('does not instruct users to read startup logs for the initial token', () => {
+    expect(rawMessages.en.login.description.toLowerCase()).not.toContain('startup logs')
+    expect(rawMessages.zh.login.description).not.toContain('启动日志')
+  })
+
   it('keeps the coverage scanner rooted in client source files', () => {
     expect(relative(process.cwd(), SOURCE_ROOT)).toBe('packages/client/src')
   })

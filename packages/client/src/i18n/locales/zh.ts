@@ -2,7 +2,7 @@ export default {
   // 登录
   login: {
     title: 'Hermes Web UI',
-    description: '输入访问令牌以继续。令牌在服务端启动日志中查看。',
+    description: '输入访问令牌以继续。请到运行服务的机器上读取 ~/.hermes-web-ui/.token。',
     placeholder: '访问令牌',
     submit: '登录',
     tokenRequired: '请输入访问令牌',
