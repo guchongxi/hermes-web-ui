@@ -25,6 +25,17 @@ const FALLBACK_IP = 'unknown'
 
 const failedAttemptsByIp = new Map<string, number[]>()
 
+function sweepExpiredBuckets(now: number, windowMs: number): void {
+  for (const [ip, attempts] of failedAttemptsByIp.entries()) {
+    const validAttempts = attempts.filter((timestamp) => now - timestamp < windowMs)
+    if (validAttempts.length > 0) {
+      failedAttemptsByIp.set(ip, validAttempts)
+    } else {
+      failedAttemptsByIp.delete(ip)
+    }
+  }
+}
+
 function resolveOptions(options: LoginRateLimitOptions) {
   return {
     trustProxy: options.trustProxy ?? parseBooleanFlag(process.env.TRUST_PROXY),
@@ -57,6 +68,7 @@ export function getLoginRateLimitState(
   options: LoginRateLimitOptions = {},
 ): LoginRateLimitState {
   const { now, windowMs, maxAttempts } = resolveOptions(options)
+  sweepExpiredBuckets(now, windowMs)
   const ip = getLoginRateLimitIp(requestLike, options)
   const attempts = pruneAttempts(ip, now, windowMs)
 
@@ -79,6 +91,7 @@ export function getLoginRateLimitState(
 
 export function recordFailedLoginAttempt(requestLike: HeaderCarrier, options: LoginRateLimitOptions = {}): void {
   const { now, windowMs } = resolveOptions(options)
+  sweepExpiredBuckets(now, windowMs)
   const ip = getLoginRateLimitIp(requestLike, options)
   const attempts = pruneAttempts(ip, now, windowMs)
   attempts.push(now)
@@ -86,6 +99,8 @@ export function recordFailedLoginAttempt(requestLike: HeaderCarrier, options: Lo
 }
 
 export function clearLoginRateLimit(requestLike: HeaderCarrier, options: LoginRateLimitOptions = {}): void {
+  const { now, windowMs } = resolveOptions(options)
+  sweepExpiredBuckets(now, windowMs)
   const ip = getLoginRateLimitIp(requestLike, options)
   failedAttemptsByIp.delete(ip)
 }

@@ -54,10 +54,12 @@ describe('auth controller', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     resetLoginRateLimitStore()
+    vi.useRealTimers()
     delete process.env.TRUST_PROXY
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     if (originalTrustProxy === undefined) {
       delete process.env.TRUST_PROXY
       return
@@ -232,5 +234,101 @@ describe('auth controller', () => {
     await login(limitedCtx as any)
 
     expect(limitedCtx.status).toBe(429)
+  })
+
+  it('clears failed attempts for the IP after a successful login', async () => {
+    credentialsMocks.verifyCredentials.mockImplementation(async (_username: string, password: string) => password === 'correct-password')
+    authMocks.getToken.mockResolvedValue('test-token')
+
+    for (let index = 0; index < 4; index += 1) {
+      const ctx = createMockCtx({
+        body: {
+          username: 'admin',
+          password: `wrong-before-success-${index}`,
+        },
+      })
+
+      await login(ctx as any)
+      expect(ctx.status).toBe(401)
+    }
+
+    const successCtx = createMockCtx({
+      body: {
+        username: 'admin',
+        password: 'correct-password',
+      },
+    })
+
+    await login(successCtx as any)
+
+    expect(successCtx.status).toBe(200)
+    expect(successCtx.body).toEqual({ token: 'test-token' })
+
+    for (let index = 0; index < 5; index += 1) {
+      const ctx = createMockCtx({
+        body: {
+          username: 'admin',
+          password: `wrong-after-success-${index}`,
+        },
+      })
+
+      await login(ctx as any)
+      expect(ctx.status).toBe(401)
+    }
+
+    const limitedCtx = createMockCtx({
+      body: {
+        username: 'admin',
+        password: 'wrong-after-reset-window',
+      },
+    })
+
+    await login(limitedCtx as any)
+
+    expect(limitedCtx.status).toBe(429)
+    expect(credentialsMocks.verifyCredentials).toHaveBeenCalledTimes(10)
+  })
+
+  it('unblocks the IP after the rate-limit window expires', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-26T01:00:00.000Z'))
+    credentialsMocks.verifyCredentials.mockResolvedValue(false)
+
+    for (let index = 0; index < 5; index += 1) {
+      const ctx = createMockCtx({
+        body: {
+          username: 'admin',
+          password: `wrong-${index}`,
+        },
+      })
+
+      await login(ctx as any)
+      expect(ctx.status).toBe(401)
+    }
+
+    const limitedCtx = createMockCtx({
+      body: {
+        username: 'admin',
+        password: 'wrong-limited',
+      },
+    })
+
+    await login(limitedCtx as any)
+
+    expect(limitedCtx.status).toBe(429)
+
+    vi.setSystemTime(new Date('2026-04-26T01:01:01.000Z'))
+
+    const unblockedCtx = createMockCtx({
+      body: {
+        username: 'admin',
+        password: 'wrong-after-window',
+      },
+    })
+
+    await login(unblockedCtx as any)
+
+    expect(unblockedCtx.status).toBe(401)
+    expect(unblockedCtx.body).toEqual({ error: 'Invalid username or password' })
   })
 })
