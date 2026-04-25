@@ -1,3 +1,6 @@
+import http from 'http'
+import Koa from 'koa'
+import { Readable } from 'stream'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 function createMultipartBody(boundary: string, filename: string, content: Buffer): Buffer {
@@ -10,22 +13,63 @@ function createMultipartBody(boundary: string, filename: string, content: Buffer
   ])
 }
 
-function createMockRequest(chunks: Buffer[]) {
-  const destroy = vi.fn()
-  let destroyed = false
+async function createTestServer() {
+  const { profileRoutes } = await import('../../packages/server/src/routes/hermes/profiles')
+  const app = new Koa()
+  app.use(profileRoutes.routes())
+  app.use(profileRoutes.allowedMethods())
 
-  return {
-    destroy,
-    get destroyed() {
-      return destroyed
-    },
-    async *[Symbol.asyncIterator]() {
-      for (const chunk of chunks) {
-        yield chunk
+  const server = http.createServer(app.callback())
+  await new Promise<void>((resolve) => {
+    server.listen(0, '127.0.0.1', () => resolve())
+  })
+
+  return server
+}
+
+async function closeServer(server: http.Server) {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error)
+        return
       }
-      destroyed = true
-    },
+      resolve()
+    })
+  })
+}
+
+async function sendMultipartRequest(server: http.Server, body: Buffer, boundary: string) {
+  const address = server.address()
+  if (!address || typeof address === 'string') {
+    throw new Error('server address unavailable')
   }
+
+  return await new Promise<{ statusCode: number; body: string; headers: http.IncomingHttpHeaders }>((resolve, reject) => {
+    const req = http.request({
+      host: '127.0.0.1',
+      port: address.port,
+      method: 'POST',
+      path: '/api/hermes/profiles/import',
+      headers: {
+        'content-type': `multipart/form-data; boundary=${boundary}`,
+      },
+    }, (res) => {
+      const chunks: Buffer[] = []
+      res.on('data', (chunk) => chunks.push(Buffer.from(chunk)))
+      res.on('end', () => {
+        resolve({
+          statusCode: res.statusCode ?? 0,
+          body: Buffer.concat(chunks).toString('utf-8'),
+          headers: res.headers,
+        })
+      })
+    })
+
+    req.on('error', reject)
+    req.write(body)
+    req.end()
+  })
 }
 
 async function loadImportProfile(overrides?: {
@@ -91,10 +135,12 @@ describe('profiles import temp file handling', () => {
     const boundary = '----codex-profile-boundary'
     const rawBody = createMultipartBody(boundary, 'client-name.archive.tar.gz', Buffer.from('archive-data'))
     const { importProfileHandler, writeFile, hermesImportProfile, unlink } = await loadImportProfile()
-    const req = createMockRequest([rawBody])
+    const req = Readable.from([rawBody]) as Readable & { headers: Record<string, string> }
+    req.headers = {}
 
     const ctx: any = {
       req,
+      res: {},
       status: undefined,
       body: undefined,
       get(name: string) {
@@ -119,10 +165,12 @@ describe('profiles import temp file handling', () => {
     const { importProfileHandler, writeFile, unlink } = await loadImportProfile({
       importProfileImpl: vi.fn().mockRejectedValue(new Error('import failed')),
     })
-    const req = createMockRequest([rawBody])
+    const req = Readable.from([rawBody]) as Readable & { headers: Record<string, string> }
+    req.headers = {}
 
     const ctx: any = {
       req,
+      res: {},
       status: undefined,
       body: undefined,
       get(name: string) {
@@ -138,28 +186,19 @@ describe('profiles import temp file handling', () => {
     expect(unlink).toHaveBeenCalledWith(archivePath)
   })
 
-  it('请求体超过 100 MiB 时返回 413 并终止请求流', async () => {
+  it('请求体超过 100 MiB 时通过真实 HTTP 返回 413', async () => {
     const boundary = '----codex-profile-boundary'
     const { importProfileHandler, hermesImportProfile, writeFile, unlink } = await loadImportProfile()
-    const req = createMockRequest([
-      Buffer.alloc(64 * 1024 * 1024, 0x61),
-      Buffer.alloc(36 * 1024 * 1024 + 1, 0x62),
-    ])
+    expect(importProfileHandler).toBeTypeOf('function')
+    const server = await createTestServer()
+    const oversizedBody = createMultipartBody(boundary, 'too-large.tar.gz', Buffer.alloc(100 * 1024 * 1024 + 1, 0x61))
 
-    const ctx: any = {
-      req,
-      status: undefined,
-      body: undefined,
-      get(name: string) {
-        return name === 'content-type' ? `multipart/form-data; boundary=${boundary}` : ''
-      },
-    }
+    const response = await sendMultipartRequest(server, oversizedBody, boundary)
+    await closeServer(server)
 
-    await importProfileHandler(ctx)
-
-    expect(ctx.status).toBe(413)
-    expect(ctx.body).toMatchObject({ code: 'profile_import_too_large' })
-    expect(req.destroy).toHaveBeenCalledTimes(1)
+    expect(response.statusCode).toBe(413)
+    expect(JSON.parse(response.body)).toMatchObject({ code: 'profile_import_too_large' })
+    expect(response.headers.connection).toBe('close')
     expect(writeFile).not.toHaveBeenCalled()
     expect(unlink).not.toHaveBeenCalled()
     expect(hermesImportProfile).not.toHaveBeenCalled()

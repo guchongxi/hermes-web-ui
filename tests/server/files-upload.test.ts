@@ -1,3 +1,5 @@
+import http from 'http'
+import Koa from 'koa'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 function createMultipartBody(boundary: string, filename: string, content: Buffer): Buffer {
@@ -10,22 +12,63 @@ function createMultipartBody(boundary: string, filename: string, content: Buffer
   ])
 }
 
-function createMockRequest(chunks: Buffer[]) {
-  const destroy = vi.fn()
-  let destroyed = false
+async function createTestServer() {
+  const { fileRoutes } = await import('../../packages/server/src/routes/hermes/files')
+  const app = new Koa()
+  app.use(fileRoutes.routes())
+  app.use(fileRoutes.allowedMethods())
 
-  return {
-    destroy,
-    get destroyed() {
-      return destroyed
-    },
-    async *[Symbol.asyncIterator]() {
-      for (const chunk of chunks) {
-        yield chunk
+  const server = http.createServer(app.callback())
+  await new Promise<void>((resolve) => {
+    server.listen(0, '127.0.0.1', () => resolve())
+  })
+
+  return server
+}
+
+async function closeServer(server: http.Server) {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error)
+        return
       }
-      destroyed = true
-    },
+      resolve()
+    })
+  })
+}
+
+async function sendMultipartRequest(server: http.Server, path: string, boundary: string, body: Buffer) {
+  const address = server.address()
+  if (!address || typeof address === 'string') {
+    throw new Error('server address unavailable')
   }
+
+  return await new Promise<{ statusCode: number; body: string; headers: http.IncomingHttpHeaders }>((resolve, reject) => {
+    const req = http.request({
+      host: '127.0.0.1',
+      port: address.port,
+      method: 'POST',
+      path,
+      headers: {
+        'content-type': `multipart/form-data; boundary=${boundary}`,
+      },
+    }, (res) => {
+      const chunks: Buffer[] = []
+      res.on('data', (chunk) => chunks.push(Buffer.from(chunk)))
+      res.on('end', () => {
+        resolve({
+          statusCode: res.statusCode ?? 0,
+          body: Buffer.concat(chunks).toString('utf-8'),
+          headers: res.headers,
+        })
+      })
+    })
+
+    req.on('error', reject)
+    req.write(body)
+    req.end()
+  })
 }
 
 async function loadUploadHandler(mocks?: {
@@ -67,23 +110,15 @@ describe('files upload request limits', () => {
     const oversizedContent = Buffer.alloc(10 * 1024 * 1024 + 1, 0x61)
     const rawBody = createMultipartBody(boundary, 'huge.bin', oversizedContent)
     const { handler, provider, createFileProvider } = await loadUploadHandler()
-    const req = createMockRequest([rawBody])
+    expect(handler).toBeTypeOf('function')
+    const server = await createTestServer()
 
-    const ctx: any = {
-      query: { path: 'uploads' },
-      req,
-      status: undefined,
-      body: undefined,
-      get(name: string) {
-        return name === 'content-type' ? `multipart/form-data; boundary=${boundary}` : ''
-      },
-    }
+    const response = await sendMultipartRequest(server, '/api/hermes/files/upload?path=uploads', boundary, rawBody)
+    await closeServer(server)
 
-    await handler(ctx)
-
-    expect(ctx.status).toBe(413)
-    expect(ctx.body).toMatchObject({ code: 'file_too_large' })
-    expect(req.destroy).toHaveBeenCalledTimes(1)
+    expect(response.statusCode).toBe(413)
+    expect(JSON.parse(response.body)).toMatchObject({ code: 'file_too_large' })
+    expect(response.headers.connection).toBe('close')
     expect(createFileProvider).not.toHaveBeenCalled()
     expect(provider.writeFile).not.toHaveBeenCalled()
   })
