@@ -143,4 +143,34 @@ describe('download security', () => {
 
     await expect(resolveDownloadTarget(outsideFile)).rejects.toMatchObject({ code: 'permission_denied' })
   })
+
+  it.each(['docker', 'ssh', 'singularity'] as const)('在 %s backend 下即使命中本地 uploadDir 绝对路径也拒绝', async (backend) => {
+    const { rootDir, profileDir, uploadDir } = createTempPaths()
+    cleanupRoots.push(rootDir)
+    writeBackendConfig(profileDir, backend)
+    const uploadFile = join(uploadDir, 'attachments', 'artifact.txt')
+    mkdirSync(join(uploadDir, 'attachments'), { recursive: true })
+    writeFileSync(uploadFile, 'upload content')
+
+    const { resolveDownloadTarget } = await loadFileProvider(profileDir, uploadDir)
+
+    await expect(resolveDownloadTarget(uploadFile)).rejects.toMatchObject({ code: 'permission_denied' })
+  })
+
+  it.each(['docker', 'ssh', 'singularity'] as const)('在 %s backend 下下载路由对绝对路径返回 403 permission_denied', async (backend) => {
+    const { rootDir, profileDir, uploadDir } = createTempPaths()
+    cleanupRoots.push(rootDir)
+    writeBackendConfig(profileDir, backend)
+    const uploadFile = join(uploadDir, 'attachments', 'artifact.txt')
+    mkdirSync(join(uploadDir, 'attachments'), { recursive: true })
+    writeFileSync(uploadFile, 'upload content')
+
+    const handler = await loadDownloadHandler(profileDir, uploadDir)
+    const { ctx } = createRouteContext(uploadFile)
+
+    await handler(ctx)
+
+    expect(ctx.status).toBe(403)
+    expect(ctx.body).toMatchObject({ code: 'permission_denied' })
+  })
 })
