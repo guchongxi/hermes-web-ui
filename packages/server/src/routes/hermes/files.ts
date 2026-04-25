@@ -5,8 +5,10 @@ import {
   isSensitivePath,
   MAX_EDIT_SIZE,
 } from '../../services/hermes/file-provider'
+import { RequestBodyTooLargeError, readRequestBody } from '../../services/request-body'
 
 export const fileRoutes = new Router()
+const MAX_UPLOAD_REQUEST_SIZE = 10 * 1024 * 1024
 
 function handleError(ctx: any, err: any) {
   const code = err.code || 'unknown'
@@ -220,9 +222,17 @@ fileRoutes.post('/api/hermes/files/upload', async (ctx) => {
     return
   }
 
-  const chunks: Buffer[] = []
-  for await (const chunk of ctx.req) chunks.push(chunk)
-  const raw = Buffer.concat(chunks)
+  let raw: Buffer
+  try {
+    raw = await readRequestBody(ctx, MAX_UPLOAD_REQUEST_SIZE, 'Upload request body too large', 'file_too_large')
+  } catch (err: any) {
+    if (err instanceof RequestBodyTooLargeError) {
+      ctx.status = err.status
+      ctx.body = { error: err.message, code: err.code }
+      return
+    }
+    throw err
+  }
 
   const boundaryBuf = Buffer.from(boundary)
   const parts = splitMultipart(raw, boundaryBuf)
