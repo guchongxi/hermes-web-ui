@@ -15,6 +15,18 @@ export async function getAvailable(ctx: any) {
     if (typeof modelSection === 'object' && modelSection !== null) {
       currentDefault = String(modelSection.default || '').trim()
       currentDefaultProvider = String(modelSection.provider || '').trim()
+      // When hermes CLI sets provider: custom, resolve to custom:name
+      // by matching base_url + model against custom_providers
+      if (currentDefaultProvider === 'custom' && currentDefault) {
+        const cps = Array.isArray(config.custom_providers) ? config.custom_providers as any[] : []
+        const match = cps.find(
+          (cp: any) => cp.base_url?.replace(/\/+$/, '') === String(modelSection.base_url || '').replace(/\/+$/, '')
+            && cp.model === currentDefault,
+        )
+        if (match) {
+          currentDefaultProvider = `custom:${match.name.trim().toLowerCase().replace(/ /g, '-')}`
+        }
+      }
     } else if (typeof modelSection === 'string') {
       currentDefault = modelSection.trim()
     }
@@ -62,7 +74,10 @@ export async function getAvailable(ctx: any) {
       if (!envMapping.api_key_env && !isOAuthAuthorized(providerKey)) continue
       const preset = PROVIDER_PRESETS.find((p: any) => p.value === providerKey)
       const label = preset?.label || providerKey.replace(/^custom:/, '')
-      const baseUrl = preset?.base_url || ''
+      let baseUrl = preset?.base_url || ''
+      if (envMapping.base_url_env && envHasValue(envMapping.base_url_env)) {
+        baseUrl = envGetValue(envMapping.base_url_env) || baseUrl
+      }
       const catalogModels = PROVIDER_MODEL_CATALOG[providerKey]
       if (catalogModels && catalogModels.length > 0) {
         const apiKey = envMapping.api_key_env ? envGetValue(envMapping.api_key_env) : ''
@@ -134,7 +149,7 @@ export async function setConfigModel(ctx: any) {
   }
   try {
     const config = await readConfigYaml()
-    if (typeof config.model !== 'object' || config.model === null) { config.model = {} }
+    config.model = {}
     config.model.default = defaultModel
     if (reqProvider) { config.model.provider = reqProvider }
     await writeConfigYaml(config)
