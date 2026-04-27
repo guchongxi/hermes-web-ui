@@ -1,6 +1,8 @@
 import type { Context } from 'koa'
 import { getCredentials, setCredentials, verifyCredentials, deleteCredentials } from '../services/credentials'
 import { getToken } from '../services/auth'
+import { clearLoginRateLimit, getLoginRateLimitState, recordFailedLoginAttempt } from '../services/login-rate-limit'
+import { logSecurityEvent } from '../services/security-events'
 
 /**
  * GET /api/auth/status
@@ -10,7 +12,7 @@ export async function authStatus(ctx: Context) {
   const cred = await getCredentials()
   ctx.body = {
     hasPasswordLogin: !!cred,
-    username: cred?.username || null,
+    username: null,
   }
 }
 
@@ -27,8 +29,27 @@ export async function login(ctx: Context) {
     return
   }
 
+  const rateLimitState = getLoginRateLimitState(ctx.request)
+  if (rateLimitState.limited) {
+    ctx.status = 429
+    ctx.set('Retry-After', String(rateLimitState.retryAfterSeconds))
+    ctx.body = {
+      code: 'rate_limited',
+      error: 'Too many login attempts. Please try again later.',
+    }
+    logSecurityEvent('auth.login_rate_limited', {
+      ip: rateLimitState.ip,
+      retryAfterSeconds: rateLimitState.retryAfterSeconds,
+    })
+    return
+  }
+
   const valid = await verifyCredentials(username, password)
   if (!valid) {
+    recordFailedLoginAttempt(ctx.request)
+    logSecurityEvent('auth.login_invalid_credentials', {
+      ip: rateLimitState.ip,
+    })
     ctx.status = 401
     ctx.body = { error: 'Invalid username or password' }
     return
@@ -41,6 +62,10 @@ export async function login(ctx: Context) {
     return
   }
 
+  clearLoginRateLimit(ctx.request)
+  logSecurityEvent('auth.login_succeeded', {
+    ip: rateLimitState.ip,
+  })
   ctx.body = { token }
 }
 

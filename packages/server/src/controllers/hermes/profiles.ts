@@ -1,11 +1,26 @@
+import { randomUUID } from 'crypto'
 import { createReadStream, existsSync, unlinkSync, writeFileSync } from 'fs'
-import { mkdir, writeFile } from 'fs/promises'
+import { mkdir, unlink, writeFile } from 'fs/promises'
 import { basename, join } from 'path'
 import { tmpdir } from 'os'
 import * as hermesCli from '../../services/hermes/hermes-cli'
 import { drainPendingSessionDeletes } from '../../services/hermes/group-chat'
 import { getGatewayManagerInstance } from '../../services/gateway-bootstrap'
 import { logger } from '../../services/logger'
+import { RequestBodyTooLargeError, readRequestBody } from '../../services/request-body'
+
+const MAX_PROFILE_IMPORT_REQUEST_SIZE = 100 * 1024 * 1024
+const SUPPORTED_ARCHIVE_SUFFIXES = ['.tar.gz', '.tgz', '.zip', '.gz'] as const
+
+function getSupportedArchiveSuffix(filename: string): string | null {
+  const lowerFilename = filename.toLowerCase()
+  for (const suffix of SUPPORTED_ARCHIVE_SUFFIXES) {
+    if (lowerFilename.endsWith(suffix)) {
+      return suffix
+    }
+  }
+  return null
+}
 
 export async function list(ctx: any) {
   try {
@@ -170,11 +185,26 @@ export async function importProfile(ctx: any) {
     ctx.body = { error: 'Missing boundary' }
     return
   }
+  let rawBody: Buffer
+  try {
+    rawBody = await readRequestBody(
+      ctx,
+      MAX_PROFILE_IMPORT_REQUEST_SIZE,
+      'Profile import request body too large',
+      'profile_import_too_large',
+    )
+  } catch (err: any) {
+    if (err instanceof RequestBodyTooLargeError) {
+      ctx.status = err.status
+      ctx.body = { error: err.message, code: err.code }
+      return
+    }
+    throw err
+  }
+
   const tmpDir = join(tmpdir(), 'hermes-import')
   await mkdir(tmpDir, { recursive: true })
-  const chunks: Buffer[] = []
-  for await (const chunk of ctx.req) chunks.push(chunk)
-  const body = Buffer.concat(chunks).toString('latin1')
+  const body = rawBody.toString('latin1')
   const parts = body.split(boundary).slice(1, -1)
   let archivePath = ''
   for (const part of parts) {
@@ -185,9 +215,9 @@ export async function importProfile(ctx: any) {
     const filenameMatch = header.match(/filename="([^"]+)"/)
     if (!filenameMatch) continue
     const filename = filenameMatch[1]
-    const ext = filename.includes('.') ? '.' + filename.split('.').pop() : ''
-    if (!['.gz', '.tar.gz', '.zip', '.tgz'].includes(ext)) continue
-    archivePath = join(tmpDir, filename)
+    const suffix = getSupportedArchiveSuffix(filename)
+    if (!suffix) continue
+    archivePath = join(tmpDir, `${randomUUID()}${suffix}`)
     await writeFile(archivePath, Buffer.from(data, 'binary'))
     break
   }
@@ -198,11 +228,13 @@ export async function importProfile(ctx: any) {
   }
   try {
     const result = await hermesCli.importProfile(archivePath)
-    try { unlinkSync(archivePath) } catch { }
     ctx.body = { success: true, message: result.trim() }
   } catch (err: any) {
-    try { unlinkSync(archivePath) } catch { }
     ctx.status = 500
     ctx.body = { error: err.message }
+  } finally {
+    try {
+      await unlink(archivePath)
+    } catch { }
   }
 }

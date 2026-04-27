@@ -132,7 +132,8 @@ Unified configuration for **8 platforms** in one page:
 
 - Token-based auth (auto-generated on first run or set via `AUTH_TOKEN` env var)
 - Optional username/password login — set via settings page after initial token auth
-- Auth can be disabled with `AUTH_DISABLED=1`
+- Bare metal: read the initial token from `~/.hermes-web-ui/.token` on the machine running the server
+- Do not set `AUTH_DISABLED=1` by itself for public deployments; no-auth mode only starts when `ALLOW_INSECURE_NO_AUTH=1` is also set
 
 ### Settings
 
@@ -198,8 +199,9 @@ docker compose logs -f hermes-webui
 Open **http://localhost:6060**
 
 - Persistent Hermes data is stored in `./hermes_data`
-- Web UI auth token is stored in `./hermes_data/hermes-web-ui/.token`
-- On first run with auth enabled, the token is printed to container logs
+- Container shell: read `/root/.hermes-web-ui/.token` inside the `hermes-webui` container
+- Host-mounted data directory: read `./hermes_data/hermes-web-ui/.token` on the host
+- `AUTH_DISABLED=1` only works together with `ALLOW_INSECURE_NO_AUTH=1` and should be treated as an unsafe local-debug override
 - All runtime settings are environment-variable driven in `docker-compose.yml`
 
 For detailed notes and troubleshooting, see [`docs/docker.md`](./docs/docker.md).

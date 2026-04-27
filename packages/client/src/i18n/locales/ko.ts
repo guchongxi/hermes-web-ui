@@ -33,7 +33,7 @@ export default {
     setupDescription: '사용자 이름과 비밀번호를 설정하여 편리하게 로그인하세요. 액세스 토큰은 백업으로 계속 사용할 수 있습니다.',
     removeConfirm: '비밀번호 로그인을 제거하시겠습니까? 액세스 토큰을 사용하여 로그인해야 합니다.',
     passwordLoginNotConfigured: '비밀번호 로그인 미설정',
-    passwordLoginConfigured: '비밀번호 로그인 활성화됨 ({username})',
+    passwordLoginConfigured: '비밀번호 로그인 활성화됨',
   },
 
   // 공통

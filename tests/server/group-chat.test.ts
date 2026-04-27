@@ -4,28 +4,33 @@ import { mkdtempSync, rmSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 
-// Mock auth so token check is skipped
-vi.mock('../../packages/server/src/services/auth', () => ({
-    getToken: vi.fn().mockResolvedValue(null),
+const socketIoState = vi.hoisted(() => ({
+    serverOptions: null as any,
+    namespaceMiddleware: null as any,
 }))
 
 // Mock socket.io — we only test REST routes, not Socket.IO
 vi.mock('socket.io', () => {
     const listeners: Record<string, any> = {}
     const mockNsp = {
-        use: vi.fn(),
+        use: vi.fn((fn: any) => {
+            socketIoState.namespaceMiddleware = fn
+        }),
         on: vi.fn((event: string, fn: any) => { listeners[event] = fn }),
         to: vi.fn().mockReturnThis(),
         emit: vi.fn(),
     }
     return {
-        Server: vi.fn().mockImplementation(() => ({
+        Server: vi.fn().mockImplementation((_httpServer: any, options: any) => {
+            socketIoState.serverOptions = options
+            return {
             of: vi.fn().mockReturnValue(mockNsp),
             use: vi.fn(),
             on: vi.fn((event: string, fn: any) => { listeners[event] = fn }),
             to: vi.fn().mockReturnThis(),
             emit: vi.fn(),
-        })),
+            }
+        }),
     }
 })
 
@@ -96,6 +101,8 @@ describe('group-chat routes', () => {
         vi.resetModules()
         mockDeleteSession.mockResolvedValue(true)
         mockDeleteSession.mockClear()
+        socketIoState.serverOptions = null
+        socketIoState.namespaceMiddleware = null
 
         // Create a fresh in-memory SQLite DB for each test
         testDb = createTestDb()
@@ -129,8 +136,13 @@ describe('group-chat routes', () => {
 
     async function createServer() {
         const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+        const { parseCorsOrigins } = await import('../../packages/server/src/services/network-security')
         const httpServer = { listen: vi.fn(), on: vi.fn() } as any
-        const server = new GroupChatServer(httpServer)
+        const server = new GroupChatServer(httpServer, {
+            authRuntime: { mode: 'insecure-no-auth', token: null },
+            corsOrigins: parseCorsOrigins('*'),
+            trustProxy: false,
+        })
         setGroupChatServer(server)
         storage = server.getStorage()
         return { server, storage }
@@ -146,6 +158,109 @@ describe('group-chat routes', () => {
     function makeCtx(body: any = {}, params: Record<string, string> = {}) {
         return { request: { body }, params, body: null, status: 200 }
     }
+
+    describe('GroupChatServer security', () => {
+        it('rejects browser handshake origins outside the configured allowlist', async () => {
+            const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+            const { parseCorsOrigins } = await import('../../packages/server/src/services/network-security')
+            const httpServer = { listen: vi.fn(), on: vi.fn() } as any
+
+            new GroupChatServer(httpServer, {
+                authRuntime: { mode: 'enabled', token: 'secret' },
+                corsOrigins: parseCorsOrigins('https://allowed.example'),
+                trustProxy: false,
+            })
+
+            const allowRequest = socketIoState.serverOptions.allowRequest
+
+            await expect(new Promise<boolean>((resolve, reject) => {
+                allowRequest({
+                    headers: { origin: 'https://blocked.example' },
+                    socket: { remoteAddress: '127.0.0.1' },
+                }, (err: Error | null, allowed: boolean) => {
+                    if (err) {
+                        reject(err)
+                        return
+                    }
+                    resolve(allowed)
+                })
+            })).resolves.toBe(false)
+        })
+
+        it('allows missing Origin for non-browser Socket.IO clients', async () => {
+            const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+            const { parseCorsOrigins } = await import('../../packages/server/src/services/network-security')
+            const httpServer = { listen: vi.fn(), on: vi.fn() } as any
+
+            new GroupChatServer(httpServer, {
+                authRuntime: { mode: 'enabled', token: 'secret' },
+                corsOrigins: parseCorsOrigins('https://allowed.example'),
+                trustProxy: false,
+            })
+
+            const allowRequest = socketIoState.serverOptions.allowRequest
+
+            await expect(new Promise<boolean>((resolve, reject) => {
+                allowRequest({
+                    headers: {},
+                    socket: { remoteAddress: '127.0.0.1' },
+                }, (err: Error | null, allowed: boolean) => {
+                    if (err) {
+                        reject(err)
+                        return
+                    }
+                    resolve(allowed)
+                })
+            })).resolves.toBe(true)
+        })
+
+        it('rejects Socket.IO connections with the wrong token in enabled mode', async () => {
+            const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+            const { parseCorsOrigins } = await import('../../packages/server/src/services/network-security')
+            const httpServer = { listen: vi.fn(), on: vi.fn() } as any
+
+            new GroupChatServer(httpServer, {
+                authRuntime: { mode: 'enabled', token: 'secret' },
+                corsOrigins: parseCorsOrigins('*'),
+                trustProxy: false,
+            })
+
+            const next = vi.fn()
+            await socketIoState.namespaceMiddleware({
+                handshake: {
+                    auth: { token: 'wrong' },
+                    query: {},
+                    headers: {},
+                },
+            }, next)
+
+            expect(next).toHaveBeenCalledWith(expect.any(Error))
+            expect(next.mock.calls[0][0].message).toMatch(/Unauthorized/i)
+        })
+
+        it('allows Socket.IO connections without a token in insecure-no-auth mode', async () => {
+            const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+            const { parseCorsOrigins } = await import('../../packages/server/src/services/network-security')
+            const httpServer = { listen: vi.fn(), on: vi.fn() } as any
+
+            new GroupChatServer(httpServer, {
+                authRuntime: { mode: 'insecure-no-auth', token: null },
+                corsOrigins: parseCorsOrigins('*'),
+                trustProxy: false,
+            })
+
+            const next = vi.fn()
+            await socketIoState.namespaceMiddleware({
+                handshake: {
+                    auth: {},
+                    query: {},
+                    headers: {},
+                },
+            }, next)
+
+            expect(next).toHaveBeenCalledWith()
+        })
+    })
 
     describe('POST /api/hermes/group-chat/rooms', () => {
         it('creates a room with agents', async () => {

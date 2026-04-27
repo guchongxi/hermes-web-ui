@@ -31,22 +31,24 @@ This compose file runs two services:
 
 All key runtime settings are configured from compose variables.
 
-| Variable              | Default                            | Description                                                                        |
-| --------------------- | ---------------------------------- | ---------------------------------------------------------------------------------- |
-| `PORT`                | `6060`                             | Web UI listen port                                                                 |
-| `UPSTREAM`            | `http://hermes-agent:8642`         | Hermes gateway URL (container internal)                                            |
-| `HERMES_BIN`          | `/opt/hermes/.venv/bin/hermes`     | Path to Hermes CLI binary                                                          |
-| `PATH` (compose 默认) | 含 `/opt/hermes/.venv/bin` 前缀    | 使容器内与 Web UI 终端里直接输入 `hermes` 能解析到 CLI（与 `HERMES_BIN` 目录一致） |
-| `HERMES_AGENT_IMAGE`  | `nousresearch/hermes-agent:latest` | Hermes Agent base image                                                            |
-| `WEBUI_IMAGE`         | `hermes-web-ui-local:latest`       | Web UI image (set to `ekkoye8888/hermes-web-ui:latest` to use pre-built)           |
-| `HERMES_DATA_DIR`     | `./hermes_data`                    | Hermes runtime data directory                                                      |
-| `AUTH_DISABLED`       | `false`                            | Set to `true` to disable login authentication                                      |
+| Variable                 | Default                            | Description                                                                              |
+| ------------------------ | ---------------------------------- | ---------------------------------------------------------------------------------------- |
+| `PORT`                   | `6060`                             | Web UI listen port                                                                       |
+| `UPSTREAM`               | `http://hermes-agent:8642`         | Hermes gateway URL (container internal)                                                  |
+| `HERMES_BIN`             | `/opt/hermes/.venv/bin/hermes`     | Path to Hermes CLI binary                                                                |
+| `PATH` (compose 默认)    | 含 `/opt/hermes/.venv/bin` 前缀    | 使容器内与 Web UI 终端里直接输入 `hermes` 能解析到 CLI（与 `HERMES_BIN` 目录一致）       |
+| `HERMES_AGENT_IMAGE`     | `nousresearch/hermes-agent:latest` | Hermes Agent base image                                                                  |
+| `WEBUI_IMAGE`            | `hermes-web-ui-local:latest`       | Web UI image (set to `ekkoye8888/hermes-web-ui:latest` to use pre-built)                 |
+| `HERMES_DATA_DIR`        | `./hermes_data`                    | Hermes runtime data directory                                                            |
+| `AUTH_TOKEN`             | _(auto-generated)_                 | Optional static auth token override for advanced deployments                             |
+| `AUTH_DISABLED`          | `false`                            | Unsafe no-auth mode flag; only honored when `ALLOW_INSECURE_NO_AUTH=true` is also set    |
+| `ALLOW_INSECURE_NO_AUTH` | `false`                            | Explicit second confirmation for running the full BFF without auth; local debugging only |
 
 Override variables directly from shell:
 
 ```bash
 PORT=16060 \
-AUTH_DISABLED=true \
+AUTH_TOKEN=replace-with-your-own-token \
 docker compose up -d hermes-agent hermes-webui
 ```
 
@@ -56,6 +58,7 @@ Or create a `.env` file in the project root:
 WEBUI_IMAGE=ekkoye8888/hermes-web-ui:latest
 PORT=6060
 AUTH_DISABLED=false
+ALLOW_INSECURE_NO_AUTH=false
 ```
 
 ## Data Persistence
@@ -67,7 +70,9 @@ AUTH_DISABLED=false
 
 - Hermes data persists in `./hermes_data`, mapped to `/home/agent/.hermes` in the container.
 - Web UI data persists in `./hermes_data/hermes-web-ui/`, mapped to `/root/.hermes-web-ui` in the container.
-- When `AUTH_DISABLED=false`, the auth token is auto-generated on first run and printed to container logs.
+- When `AUTH_TOKEN` is not set, the Web UI token is auto-generated on first run and stored in `/root/.hermes-web-ui/.token` inside the container.
+- From the host, read the same token from `./hermes_data/hermes-web-ui/.token` when `HERMES_DATA_DIR=./hermes_data`.
+- `AUTH_DISABLED=true` is ignored unless `ALLOW_INSECURE_NO_AUTH=true` is also set; do not use that combination for public deployments.
 - Deleting the token file and restarting will generate a new one.
 
 ## Port Mapping
@@ -95,8 +100,8 @@ docker compose up -d --no-deps --force-recreate hermes-webui
 View auth token:
 
 ```bash
-docker compose logs hermes-webui | grep token
-# or
+docker compose exec hermes-webui cat /root/.hermes-web-ui/.token
+# or, from the host-mounted data directory
 cat ./hermes_data/hermes-web-ui/.token
 ```
 

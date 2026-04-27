@@ -33,7 +33,7 @@ export default {
     setupDescription: 'Configure um nome de usuario e senha para login conveniente. O token de acesso continuara funcionando como backup.',
     removeConfirm: 'Tem certeza de que deseja remover o login por senha? Voce precisara usar o token de acesso.',
     passwordLoginNotConfigured: 'Login por senha nao configurado',
-    passwordLoginConfigured: 'Login por senha habilitado ({username})',
+    passwordLoginConfigured: 'Login por senha habilitado',
   },
 
   // Common

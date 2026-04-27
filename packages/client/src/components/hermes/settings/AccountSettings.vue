@@ -8,7 +8,6 @@ const { t } = useI18n();
 const message = useMessage();
 
 const hasPasswordLogin = ref(false);
-const username = ref<string | null>(null);
 const loading = ref(false);
 
 // Setup form
@@ -32,7 +31,6 @@ onMounted(async () => {
   try {
     const status = await fetchAuthStatus();
     hasPasswordLogin.value = status.hasPasswordLogin;
-    username.value = status.username;
   } catch { /* ignore */ }
 });
 
@@ -49,7 +47,6 @@ async function handleSetup() {
   try {
     await setupPassword(setupUsername.value, setupPasswordVal.value);
     hasPasswordLogin.value = true;
-    username.value = setupUsername.value;
     showSetupModal.value = false;
     setupUsername.value = "";
     setupPasswordVal.value = "";
@@ -94,7 +91,6 @@ async function handleChangeUsername() {
   loading.value = true;
   try {
     await changeUsername(currentPasswordForName.value, newUsernameVal.value.trim());
-    username.value = newUsernameVal.value.trim();
     showChangeUsernameModal.value = false;
     currentPasswordForName.value = "";
     newUsernameVal.value = "";
@@ -111,7 +107,6 @@ async function handleRemove() {
   try {
     await removePassword();
     hasPasswordLogin.value = false;
-    username.value = null;
     message.success(t("login.passwordRemoved"));
   } catch (err: any) {
     message.error(err.message || t("common.saveFailed"));
@@ -154,7 +149,7 @@ function openChangeUsernameModal() {
     <!-- Configured -->
     <div v-else class="configured-section">
       <div class="action-row">
-        <span class="action-label">{{ t("login.passwordLoginConfigured", { username }) }}</span>
+        <span class="action-label">{{ t("login.passwordLoginConfigured") }}</span>
         <div class="action-buttons">
           <NButton @click="openChangePasswordModal">{{ t("login.changePassword") }}</NButton>
           <NButton @click="openChangeUsernameModal">{{ t("login.changeUsername") }}</NButton>

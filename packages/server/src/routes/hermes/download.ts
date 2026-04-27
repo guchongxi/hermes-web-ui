@@ -1,11 +1,7 @@
 import Router from '@koa/router'
 import { basename, extname } from 'path'
 import {
-  createFileProvider,
-  localProvider,
-  isInUploadDir,
-  validatePath,
-  resolveHermesPath,
+  resolveDownloadTarget,
 } from '../../services/hermes/file-provider'
 
 export const downloadRoutes = new Router()
@@ -73,21 +69,11 @@ downloadRoutes.get('/api/hermes/download', async (ctx) => {
   }
 
   try {
-    // Validate the path first
-    // Support both absolute and relative paths
-    const validPath = filePath.startsWith('/') ? validatePath(filePath) : resolveHermesPath(filePath)
-
-    // Choose provider: always use local for upload directory files
-    let data: Buffer
-    if (isInUploadDir(validPath)) {
-      data = await localProvider.readFile(validPath)
-    } else {
-      const provider = await createFileProvider()
-      data = await provider.readFile(validPath)
-    }
+    const target = await resolveDownloadTarget(filePath)
+    const data = await target.provider.readFile(target.path)
 
     // Determine filename and MIME type
-    const name = fileName || basename(validPath)
+    const name = fileName || basename(target.path)
     const mime = getMimeType(name)
 
     // Set response headers
@@ -103,6 +89,7 @@ downloadRoutes.get('/api/hermes/download', async (ctx) => {
       invalid_path: 400,
       not_found: 404,
       ENOENT: 404,
+      permission_denied: 403,
       file_too_large: 413,
       unsupported_backend: 501,
       backend_error: 502,

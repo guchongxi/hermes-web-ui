@@ -61,6 +61,11 @@ export interface TerminalConfig {
   singularity_image?: string
 }
 
+export interface DownloadTarget {
+  provider: FileProvider
+  path: string
+}
+
 /**
  * Validate a file path: must be absolute and not contain '..' traversal.
  */
@@ -115,6 +120,44 @@ export function resolveHermesPath(relativePath: string): string {
     throw Object.assign(new Error('Path traversal detected'), { code: 'invalid_path' })
   }
   return resolved
+}
+
+/**
+ * Resolve a client download request to an authorized absolute path and provider.
+ * Relative paths stay scoped to the active profile. Absolute paths are only
+ * allowed for the local backend when they point into the upload directory.
+ */
+export async function resolveDownloadTarget(filePath: string): Promise<DownloadTarget> {
+  if (!filePath) throw Object.assign(new Error('Missing file path'), { code: 'missing_path' })
+
+  if (!isAbsolute(filePath)) {
+    return {
+      path: resolveHermesPath(filePath),
+      provider: await createFileProvider(),
+    }
+  }
+
+  const absolutePath = validatePath(filePath)
+  const { backend } = getTerminalConfig()
+
+  if (backend !== 'local') {
+    throw Object.assign(
+      new Error('Absolute path download is not allowed for this backend'),
+      { code: 'permission_denied' },
+    )
+  }
+
+  if (!isInUploadDir(absolutePath)) {
+    throw Object.assign(
+      new Error('Absolute path download is not allowed'),
+      { code: 'permission_denied' },
+    )
+  }
+
+  return {
+    path: absolutePath,
+    provider: localProvider,
+  }
 }
 
 // --- Local ---

@@ -2,22 +2,20 @@ import { readFile, writeFile, mkdir } from 'fs/promises'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
 import { homedir } from 'os'
+import { parseBooleanFlag } from './network-security'
 
 const APP_HOME = join(homedir(), '.hermes-web-ui')
 const TOKEN_FILE = join(APP_HOME, '.token')
+
+export type AuthRuntime =
+  | { mode: 'enabled'; token: string }
+  | { mode: 'insecure-no-auth'; token: null }
 
 function generateToken(): string {
   return randomBytes(32).toString('hex')
 }
 
-/**
- * Get or create the auth token. Returns null if auth is disabled.
- */
-export async function getToken(): Promise<string | null> {
-  if (process.env.AUTH_DISABLED === '1' || process.env.AUTH_DISABLED === 'true') {
-    return null
-  }
-
+async function getOrCreateToken(): Promise<string> {
   if (process.env.AUTH_TOKEN) {
     return process.env.AUTH_TOKEN
   }
@@ -33,24 +31,69 @@ export async function getToken(): Promise<string | null> {
   }
 }
 
+export async function getAuthRuntime(): Promise<AuthRuntime> {
+  const authDisabled = parseBooleanFlag(process.env.AUTH_DISABLED)
+  const allowInsecureNoAuth = parseBooleanFlag(process.env.ALLOW_INSECURE_NO_AUTH)
+
+  if (authDisabled) {
+    if (!allowInsecureNoAuth) {
+      throw new Error('AUTH_DISABLED requires ALLOW_INSECURE_NO_AUTH=1|true before startup can continue')
+    }
+
+    return {
+      mode: 'insecure-no-auth',
+      token: null,
+    }
+  }
+
+  return {
+    mode: 'enabled',
+    token: await getOrCreateToken(),
+  }
+}
+
+export async function getToken(): Promise<string | null> {
+  const runtime = await getAuthRuntime()
+  return runtime.token
+}
+
+export function describeAuthRuntime(runtime: AuthRuntime): string {
+  if (runtime.mode === 'enabled') {
+    return 'Auth enabled'
+  }
+
+  return 'WARNING: running in insecure-no-auth mode'
+}
+
+export function isTokenAuthorized(runtime: AuthRuntime, providedToken: string | null | undefined): boolean {
+  if (runtime.mode === 'insecure-no-auth') {
+    return true
+  }
+
+  return Boolean(providedToken) && providedToken === runtime.token
+}
+
+function getBearerToken(authorization: string | undefined): string {
+  if (!authorization?.startsWith('Bearer ')) {
+    return ''
+  }
+  return authorization.slice(7)
+}
+
 /**
  * Koa middleware: check Authorization header or query token.
  * No path whitelisting — applied globally after public routes.
  */
-export function requireAuth(token: string | null) {
+export function requireAuth(runtime: AuthRuntime) {
   return async (ctx: any, next: () => Promise<void>) => {
-    if (!token) {
+    if (runtime.mode === 'insecure-no-auth') {
       await next()
       return
     }
 
-    const auth = ctx.headers.authorization || ''
-    const provided = auth.startsWith('Bearer ')
-      ? auth.slice(7)
-      : (ctx.query.token as string) || ''
+    const provided = getBearerToken(ctx.headers.authorization) || (ctx.query.token as string) || ''
 
-    if (!provided || provided !== token) {
-      // Skip auth for non-API paths (SPA static files)
+    if (!isTokenAuthorized(runtime, provided)) {
       const lowerPath = ctx.path.toLowerCase()
       if (!lowerPath.startsWith('/api') && !lowerPath.startsWith('/v1') && !lowerPath.startsWith('/upload')) {
         await next()

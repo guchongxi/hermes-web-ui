@@ -2,7 +2,7 @@ export default {
   // Login
   login: {
     title: 'Hermes Web UI',
-    description: 'Enter your access token to continue. Find it in the server startup logs.',
+    description: 'Enter your access token to continue. Read it from ~/.hermes-web-ui/.token on the machine running the server.',
     placeholder: 'Access token',
     submit: 'Login',
     tokenRequired: 'Please enter your access token',
@@ -33,7 +33,7 @@ export default {
     setupDescription: 'Set up a username and password for convenient login. The access token will continue to work as a backup.',
     removeConfirm: 'Are you sure you want to remove password login? You will need to use the access token to log in.',
     passwordLoginNotConfigured: 'Password login is not configured',
-    passwordLoginConfigured: 'Password login enabled ({username})',
+    passwordLoginConfigured: 'Password login enabled',
   },
 
   // Common

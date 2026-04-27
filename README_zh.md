@@ -140,7 +140,8 @@
 
 - 基于 Token 的认证（首次运行自动生成或通过 `AUTH_TOKEN` 环境变量设置）
 - 可选的用户名/密码登录 — 通过初始 Token 认证后在设置页面设置
-- 可通过 `AUTH_DISABLED=1` 禁用认证
+- 裸机部署：到运行服务的机器上读取 `~/.hermes-web-ui/.token`
+- 公网部署下不要单独设置 `AUTH_DISABLED=1`；只有同时设置 `ALLOW_INSECURE_NO_AUTH=1` 才会进入不安全无认证模式
 
 ### 设置
 
@@ -206,8 +207,9 @@ docker compose logs -f hermes-webui
 打开 **http://localhost:6060**
 
 - Hermes 持久化数据目录：`./hermes_data`
-- Web UI 认证 Token 存储在 `./hermes_data/hermes-web-ui/.token`
-- 首次启动并开启认证时，Token 会打印到容器日志中
+- 容器内读取：进入 `hermes-webui` 容器后读取 `/root/.hermes-web-ui/.token`
+- 宿主机挂载目录：在宿主机读取 `./hermes_data/hermes-web-ui/.token`
+- `AUTH_DISABLED=1` 只有配合 `ALLOW_INSECURE_NO_AUTH=1` 才会生效，且仅适合本机调试
 - 运行参数全部由 `docker-compose.yml` 环境变量驱动
 
 更详细的说明与排错见：[`docs/docker.md`](./docs/docker.md)

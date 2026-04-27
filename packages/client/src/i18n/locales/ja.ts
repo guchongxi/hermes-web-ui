@@ -33,7 +33,7 @@ export default {
     setupDescription: 'ユーザー名とパスワードを設定して、簡単にログインできるようにします。アクセストークンは引き続きバックアップとして使用できます。',
     removeConfirm: 'パスワードログインを削除しますか？アクセストークンを使用してログインする必要があります。',
     passwordLoginNotConfigured: 'パスワードログイン未設定',
-    passwordLoginConfigured: 'パスワードログイン有効（{username}）',
+    passwordLoginConfigured: 'パスワードログイン有効',
   },
 
   // 共通
